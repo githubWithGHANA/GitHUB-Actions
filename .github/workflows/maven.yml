@@ -47,3 +47,8 @@ jobs:
           echo "Deploying $WAR_FILE to Tomcat..."
           curl -v --upload-file "$WAR_FILE" \
             "http://${{ secrets.TOMCAT_USER }}:${{ secrets.TOMCAT_PASSWORD }}@${{ secrets.TOMCAT_HOST }}/manager/text/deploy?path=/myapp&update=true"
+
+          # 9. Optional: verify deployment
+      - name: Verify deployment
+        run: |
+          curl -I http://${{ secrets.TOMCAT_HOST }}/myapp
