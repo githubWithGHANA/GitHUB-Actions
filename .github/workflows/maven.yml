@@ -4,7 +4,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
 
     steps:
       # 1. Checkout code
