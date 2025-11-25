@@ -4,7 +4,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
 
     steps:
       # 1. Checkout code
@@ -18,29 +18,37 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # 3. Build with Maven
+      # 3. Install Maven if missing
+      - name: Ensure Maven is installed
+        run: |
+          if ! command -v mvn &> /dev/null; then
+            echo "Maven not found. Installing..."
+            sudo dnf install -y maven
+          else
+            echo "Maven is already installed"
+          fi
+          mvn -version
+      # 4. Cache Maven dependencies
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # 5. Build with Maven
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      # 4. Upload WAR as artifact (optional, for later jobs)
+      # 6. Upload WAR as artifact (optional, for later jobs)
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: myapp
           path: target/*.war
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    environment: production
-
-    steps:
-      # 5. Download WAR artifact
-      - name: Download WAR artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: myapp
-       #6. Install SonarQube Scanner CLI
+      # 6. Install SonarQube Scanner CLI
       - name: Install SonarQube Scanner CLI
         run: |
           if [ ! -d "$HOME/sonar-scanner-cli" ]; then
@@ -63,8 +71,20 @@ jobs:
             -Dsonar.projectKey=Hotstar \
             -Dsonar.host.url=$SONAR_HOST \
             -Dsonar.login=$SONAR_LOGIN
-            
-         # 8. Deploy WAR via Tomcat Manager
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      # 7. Download WAR artifact
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: myapp
+
+      # 8. Deploy WAR via Tomcat Manager
       - name: Deploy to Tomcat
         run: |
           WAR_FILE=$(ls *.war)
@@ -75,5 +95,3 @@ jobs:
       - name: Verify deployment
         run: |
           curl -I http://${{ secrets.TOMCAT_HOST }}/myapp
-      # 6. Deploy WAR via Tomcat Manager
-     
