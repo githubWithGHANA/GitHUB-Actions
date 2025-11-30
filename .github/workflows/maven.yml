@@ -1,24 +1,31 @@
 on:
   push:
-    branches: [ main ]   # Trigger on push to main branch
+    branches: [ main ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
 
+  source_checkout:
+    runs-on: ubuntu-latest
+    name: "Source Checkout"
     steps:
-      # 1. Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Set up JDK
+
+  setup_environment:
+    runs-on: ubuntu-latest
+    name: "Set Up Build Environment"
+    needs: source_checkout
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 3. Install Maven if missing
       - name: Ensure Maven is installed
         run: |
           if ! command -v mvn &> /dev/null; then
@@ -28,27 +35,42 @@ jobs:
             echo "Maven is already installed"
           fi
           mvn -version
-      # 4. Cache Maven dependencies
+
       - name: Cache Maven packages
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.m2/repository
+          path: ~/.m2/repository
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # 5. Build with Maven
+
+  build_package:
+    runs-on: ubuntu-latest
+    name: "Build & Package"
+    needs: setup_environment
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      # 6. Upload WAR as artifact (optional, for later jobs)
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: myapp
           path: target/*.war
-      # 6. Install SonarQube Scanner CLI
+
+
+  sonar_analysis:
+    runs-on: ubuntu-latest
+    name: "Static Code Analysis (SonarQube)"
+    needs: build_package
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Install SonarQube Scanner CLI
         run: |
           if [ ! -d "$HOME/sonar-scanner-cli" ]; then
@@ -59,7 +81,7 @@ jobs:
           fi
           export PATH=$HOME/sonar-scanner-cli/bin:$PATH
           sonar-scanner -v
-      # 7. SonarQube analysis
+
       - name: SonarQube Analysis
         env:
           SONAR_HOST: ${{ secrets.SONAR_HOST }}
@@ -72,26 +94,42 @@ jobs:
             -Dsonar.host.url=$SONAR_HOST \
             -Dsonar.login=$SONAR_LOGIN
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    environment: production
 
+  publish_artifact:
+    runs-on: ubuntu-latest
+    name: "Publish Build Artifact"
+    needs: sonar_analysis
     steps:
-      # 7. Download WAR artifact
       - name: Download WAR artifact
         uses: actions/download-artifact@v4
         with:
           name: myapp
 
-      # 8. Deploy WAR via Tomcat Manager
+
+  deploy_to_tomcat:
+    runs-on: ubuntu-latest
+    name: "Deployment to Tomcat"
+    needs: publish_artifact
+    environment: production
+    steps:
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: myapp
+
       - name: Deploy to Tomcat
         run: |
           WAR_FILE=$(ls *.war)
           echo "Deploying $WAR_FILE to Tomcat..."
           curl -v --upload-file "$WAR_FILE" \
             "http://${{ secrets.TOMCAT_USER }}:${{ secrets.TOMCAT_PASSWORD }}@${{ secrets.TOMCAT_HOST }}/manager/text/deploy?path=/myapp&update=true"
-      # 9. Optional: verify deployment
+
+
+  post_deploy_verification:
+    runs-on: ubuntu-latest
+    name: "Post-Deployment Verification"
+    needs: deploy_to_tomcat
+    steps:
       - name: Verify deployment
         run: |
           curl -I http://${{ secrets.TOMCAT_HOST }}/myapp
